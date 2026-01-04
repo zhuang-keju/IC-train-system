@@ -1,4 +1,5 @@
-#!/usr/bin/env python3"""
+#!/usr/bin/env python3
+"""
 硅基未来AI仿真系统 - 后端服务
 完全封装Qucs-S/ngspice，对外提供统一的仿真API
 """
