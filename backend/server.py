@@ -308,7 +308,8 @@ def ai_analyze_results(circuit_type, params, sim_results):
         "analysis_timestamp": datetime.now().isoformat()
     }
 # ==================== API 路由 ====================
-@app.route('/api/system/info', methods=['GET'])def system_info():
+@app.route('/api/system/info', methods=['GET'])
+def system_info():
     """获取系统信息"""
     return jsonify({
         "name": CONFIG["system_name"],
@@ -317,7 +318,8 @@ def ai_analyze_results(circuit_type, params, sim_results):
         "circuits_available": len(CIRCUIT_LIBRARY),
         "simulator_engine": "硅基未来仿真引擎"
     })
-@app.route('/api/circuits', methods=['GET'])def get_circuits():
+@app.route('/api/circuits', methods=['GET'])
+def get_circuits():
     """获取可用电路列表"""
     circuits = []
     for circuit_id, circuit_info in CIRCUIT_LIBRARY.items():
@@ -330,7 +332,8 @@ def ai_analyze_results(circuit_type, params, sim_results):
             "analyses": circuit_info["analysis"]
         })
     return jsonify(circuits)
-@app.route('/api/simulate', methods=['POST'])def simulate():
+@app.route('/api/simulate', methods=['POST'])
+def simulate():
     """执行电路仿真"""
     try:
         data = request.json
@@ -379,7 +382,8 @@ def ai_analyze_results(circuit_type, params, sim_results):
         
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-@app.route('/api/analyze/performance', methods=['POST'])def analyze_performance():
+@app.route('/api/analyze/performance', methods=['POST'])
+def analyze_performance():
     """专业性能分析"""
     data = request.json
     circuit_type = data.get('circuit_type')
@@ -393,7 +397,8 @@ def ai_analyze_results(circuit_type, params, sim_results):
         "performance_analysis": analysis,
         "recommendations": analysis["suggestions"]
     })
-@app.route('/api/examples/<circuit_type>', methods=['GET'])def get_example(circuit_type):
+@app.route('/api/examples/<circuit_type>', methods=['GET'])
+def get_example(circuit_type):
     """获取电路示例配置"""
     if circuit_type in CIRCUIT_LIBRARY:
         example_params = {}
