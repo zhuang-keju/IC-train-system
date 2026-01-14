@@ -503,6 +503,78 @@
         </footer>
     </div>
 
+<!-- 
+    <button class="btn btn-secondary" onclick="autoLayout()" id="btnAutoLayout">
+    <span>✨</span> AI 自动整理画布
+    </button>
+
+    <script>
+    async function autoLayout() {
+        const spiceInput = document.getElementById('spiceInput');
+        const previewBox = document.getElementById('schematicPreview');
+        const btn = document.getElementById('btnAutoLayout');
+
+        // 1. 获取 SPICE 代码
+        const spiceCode = spiceInput.value.trim();
+        if (!spiceCode) {
+            alert("请先输入 SPICE 代码！");
+            return;
+        }
+
+        // 2. 界面进入"加载中"状态
+        const originalBtnText = btn.innerHTML;
+        btn.innerHTML = '<span>⏳</span> 整理中...';
+        btn.disabled = true;
+        previewBox.style.opacity = '0.5';
+
+        try {
+            // 3. 调用后端 API
+            const response = await fetch('/api/draw/auto', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ spice_code: spiceCode })
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.svg) {
+                // 4. 显示返回的 SVG
+                previewBox.innerHTML = result.svg;
+                
+                // 优化 SVG 显示样式 (让它自适应容器大小)
+                const svgElement = previewBox.querySelector('svg');
+                if (svgElement) {
+                    svgElement.style.width = "100%";
+                    svgElement.style.height = "auto";
+                    svgElement.style.maxWidth = "100%";
+                    svgElement.style.maxHeight = "500px"; // 防止图太大撑破布局
+                }
+            } else {
+                throw new Error(result.error || '生成失败');
+            }
+
+        } catch (error) {
+            console.error('自动布局错误:', error);
+            // 在预览框里显示错误提示，而不是简单的弹窗，体验更好
+            previewBox.innerHTML = `
+                <div style="color: #ff6b6b; text-align: center; padding: 20px;">
+                    <div style="font-size: 2rem;">❌</div>
+                    <p>自动整理失败</p>
+                    <p style="font-size: 0.8rem; opacity: 0.8;">${error.message}</p>
+                    <p style="font-size: 0.8rem; opacity: 0.6;">请检查是否安装了 Graphviz 软件</p>
+                </div>
+            `;
+        } finally {
+            // 5. 恢复界面状态
+            btn.innerHTML = originalBtnText;
+            btn.disabled = false;
+            previewBox.style.opacity = '1';
+        }
+    }
+    </script>
+ -->
     <!-- JavaScript -->
     <script>
         // 全局状态
@@ -521,6 +593,16 @@
             try {
                 const response = await fetch('http://localhost:5000/api/circuits');
                 const circuits = await response.json();
+
+                // --- 插入开始：手动添加自由绘图模式 ---
+                circuits.unshift({
+                    id: 'custom_draw',
+                    name: '自由SPICE设计',
+                    description: '编写SPICE网表，支持文件导入与AI自动布局',
+                    category: '工具',
+                    parameters: {} 
+                });
+                // --- 插入结束 ---
                 
                 const circuitList = document.getElementById('circuitList');
                 circuitList.innerHTML = '';
@@ -588,6 +670,12 @@
         // 生成参数控制面板
         function generateParameterControls(circuit) {
             const designPanel = document.getElementById('designPanel');
+            // --- 插入开始：拦截逻辑 ---
+            if (circuit.id === 'custom_draw') {
+                renderCustomDrawMode(designPanel);
+                return; // 这里的 return 很重要，阻止执行后面的代码
+            }
+            // --- 插入结束 ---
             
             let paramsHTML = `
                 <div class="param-controls">
@@ -709,6 +797,22 @@
         async function runSimulation() {
             if (!currentCircuit || isSimulating) return;
             
+            // ↓↓↓ 修改开始：构建请求参数 ↓↓↓
+            let requestParams = currentParameters; // 默认情况
+            
+            // 如果是自由绘图模式，参数就是编辑器里的文本
+            if (currentCircuit.id === 'custom_draw') {
+                const spiceCode = document.getElementById('spiceInput').value;
+                if(!spiceCode.trim()) {
+                    alert("SPICE 代码不能为空！");
+                    return;
+                }
+                requestParams = { spice_code: spiceCode };
+            }
+            // ↑↑↑ 修改结束 ↑↑↑
+
+
+
             isSimulating = true;
             updateStatus('仿真运行中...', 'running');
             
@@ -723,7 +827,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         circuit_type: currentCircuit.id,
-                        parameters: currentParameters,
+                        // parameters: currentParameters,
+                        parameters: requestParams,
                         analysis: 'tran'
                     })
                 });
@@ -903,4 +1008,243 @@
                     break;
             }
         }
-    </script></body></html>
+
+
+
+    // ==========================================
+    // ↓↓↓ 新增功能区：SPICE 编辑器与自动布局 ↓↓↓
+    // ==========================================
+
+
+
+    // --- 新增：AI 自动优化逻辑 ---
+    async function runOptimization() {
+        const spiceCode = document.getElementById('spiceInput').value;
+        const btn = document.getElementById('optBtn');
+        const resBox = document.getElementById('optimizationResults');
+        const resContent = document.getElementById('optDetails');
+
+        // 1. 基本检查
+        if (!spiceCode.trim()) {
+            alert("请输入 SPICE 代码！");
+            return;
+        }
+        if (!spiceCode.includes(".param")) {
+            alert("⚠️ 代码中没有找到 .param 变量！\nAI 需要 '把手' 才能进行调整。\n\n请尝试将固定数值改为变量，例如：\n.param R_load=10k\nR1 out 0 {R_load}");
+            return;
+        }
+
+        // 2. 切换 UI 到“计算中”状态
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span>🔄</span> AI 正在疯狂试错中...';
+        btn.disabled = true;
+        btn.style.opacity = "0.7";
+        resBox.style.display = 'none'; // 先隐藏旧结果
+
+        try {
+            // 3. 发送请求给后端 (调用我们刚刚写的优化器)
+            const response = await fetch('http://localhost:5000/api/optimize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ spice_code: spiceCode })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                // 4. 成功：生成漂亮的 HTML 报告
+                let html = `
+                    <div style="display: flex; align-items: baseline; gap: 15px; margin-bottom: 15px;">
+                        <div style="font-size: 1.1em;">🏆 最佳得分: <span style="color:#00ff00; font-weight: bold; font-size: 1.3em;">${result.best_score.toFixed(1)}</span></div>
+                        ${result.best_metrics.gain_db ? `<div style="color: #aaa;">(增益: ${result.best_metrics.gain_db} dB)</div>` : ''}
+                    </div>
+                `;
+                
+                html += `<div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 6px;">`;
+                html += `<p style="color: #a56eff; margin-bottom: 8px; font-weight: bold;">🔧 建议修改参数:</p>`;
+                html += `<ul style="list-style: none; padding-left: 0; margin: 0;">`;
+                
+                // 遍历所有优化的参数
+                for (const [key, val] of Object.entries(result.best_params)) {
+                    html += `<li style="margin-bottom: 5px; display: flex; justify-content: space-between; border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 3px;">
+                        <span>.param <span style="color: #fff;">${key}</span></span> 
+                        <span style="color: #ffd700;">= ${val}</span>
+                    </li>`;
+                }
+                html += `</ul></div>`;
+                
+                // 显示历史摘要
+                html += `<div style="font-size: 0.8em; color: #888; margin-top: 10px; text-align: right;">
+                    共进行了 ${result.history.length} 轮仿真迭代
+                </div>`;
+
+                resContent.innerHTML = html;
+                resBox.style.display = 'block'; // 显示结果框
+                
+                // 自动滚动到结果区
+                resBox.scrollIntoView({ behavior: 'smooth' });
+
+            } else {
+                alert("优化失败: " + (result.error || "后端返回未知错误"));
+            }
+
+        } catch (e) {
+            console.error(e);
+            alert("连接服务器失败: " + e.message);
+        } finally {
+            // 5. 恢复按钮状态
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            btn.style.opacity = "1";
+        }
+    }
+
+
+    // 1. 渲染编辑器界面 (包含 AI 优化按钮)
+    function renderCustomDrawMode(container) {
+        const defaultSpice = `* 示例电路
+V1 in 0 5V
+R1 in out 10k
+C1 out 0 1u`;
+
+        container.innerHTML = `
+            <div style="margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h4 style="color: var(--light); margin: 0;">📝 SPICE 代码编辑器</h4>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="file" id="fileUpload" accept=".cir,.sp,.txt" style="display: none;" onchange="handleFileUpload(this)">
+                        <button class="btn btn-secondary" onclick="document.getElementById('fileUpload').click()" style="padding: 5px 15px; font-size: 0.9rem;">
+                            <span>📂</span> 导入
+                        </button>
+                        <button class="btn btn-secondary" onclick="autoLayout()" id="btnAutoLayout" style="padding: 5px 15px; font-size: 0.9rem;">
+                            <span>✨</span> AI 自动整理
+                        </button>
+                    </div>
+                </div>
+                
+                <textarea id="spiceInput" class="dsl-editor" 
+                    style="height: 200px; width: 100%; font-family: 'Consolas', monospace; color: #a5d6ff; background: #222; border: 1px solid #444; padding: 10px; border-radius: 8px;"
+                    placeholder="在此输入 SPICE 代码...">${defaultSpice}</textarea>
+                
+                <div class="control-buttons" style="margin-top: 15px; display: flex; gap: 10px;">
+                    <button class="btn btn-secondary" onclick="previewSpice()">
+                        <span>🎨</span> 仅渲染
+                    </button>
+                    
+                    <button class="btn btn-primary" onclick="runSimulation()" id="simBtn">
+                        <span>🚀</span> 运行仿真
+                    </button>
+                    
+                    <button class="btn" 
+                            style="background: linear-gradient(90deg, #6f42c1, #8e44ad); color: white; border: none;" 
+                            onclick="runOptimization()" 
+                            id="optBtn">
+                        <span>🧠</span> AI 深度优化 (Beta)
+                    </button>
+                </div>
+
+                <div id="optimizationResults" style="margin-top: 20px; display: none; background: rgba(111, 66, 193, 0.1); border: 1px solid #6f42c1; border-radius: 10px; padding: 20px;">
+                    <h4 style="color: #a56eff; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid rgba(111, 66, 193, 0.3); padding-bottom: 10px;">
+                        🎯 AI 寻优完成
+                    </h4>
+                    <div id="optDetails" style="font-family: 'Consolas', monospace; color: #ddd; line-height: 1.6;">
+                        </div>
+                </div>
+                
+                </div>
+
+            <div id="schematicPreview" style="background: white; padding: 20px; border-radius: 8px; text-align: center; min-height: 300px; display: flex; align-items: center; justify-content: center;">
+                <span style="color: #666;">点击渲染或自动整理...</span>
+            </div>
+        `;
+        // 自动预览一次
+        previewSpice(); 
+    }
+
+
+
+
+
+
+
+
+    // 2. AI 自动整理逻辑
+    async function autoLayout() {
+        const spiceInput = document.getElementById('spiceInput');
+        const previewBox = document.getElementById('schematicPreview');
+        const btn = document.getElementById('btnAutoLayout');
+
+        if (!spiceInput || !spiceInput.value.trim()) {
+            alert("请先输入代码");
+            return;
+        }
+
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span>⏳</span>...';
+        btn.disabled = true;
+        previewBox.style.opacity = '0.5';
+
+        try {
+            const response = await fetch('/api/draw/auto', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ spice_code: spiceInput.value })
+            });
+            const result = await response.json();
+
+            if (result.svg) {
+                previewBox.innerHTML = result.svg;
+                const svg = previewBox.querySelector('svg');
+                if(svg) { svg.style.width="100%"; svg.style.height="auto"; }
+            } else {
+                throw new Error(result.error || '生成失败');
+            }
+        } catch (e) {
+            console.error(e);
+            previewBox.innerHTML = `<div style="color:red">❌ 整理失败: ${e.message}</div>`;
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            previewBox.style.opacity = '1';
+        }
+    }
+
+    // 3. 普通 SPICE 渲染逻辑
+    async function previewSpice() {
+        const text = document.getElementById('spiceInput').value;
+        const previewBox = document.getElementById('schematicPreview');
+        
+        try {
+            const response = await fetch('/api/draw/spice', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ spice_code: text })
+            });
+            const result = await response.json();
+            if(result.svg) {
+                previewBox.innerHTML = result.svg;
+            }
+        } catch(e) { console.error(e); }
+    }
+
+    // 4. 文件上传处理
+    function handleFileUpload(input) {
+        const file = input.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            document.getElementById('spiceInput').value = e.target.result;
+            previewSpice();
+        };
+        reader.readAsText(file);
+    }
+
+
+
+
+
+
+
+    
+    </script>
+    </body></html>

@@ -3,3 +3,5 @@ Flask-CORS==4.0.0
 numpy==1.24.3
 matplotlib==3.7.1
 scipy==1.10.1
+schemdraw
+graphviz
